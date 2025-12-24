@@ -1,5 +1,6 @@
 import os
 import random
+import time
 
 DATA_FT06 = """
 6 6
@@ -81,15 +82,101 @@ class Scheduler:
         makespan = max(machine_free_time)
         return makespan
 
+class GeneticAlgorithm:
+    def __init__(self, instance, pop_size=100, generations=1000):
+        self.instance = instance
+        self.pop_size = pop_size
+        self.generations = generations
+        self.mutation_rate = 0.1
+        self.crossover_rate = 0.8
+        
+        self.base_genes = []
+        for j in range(instance.num_jobs):
+            self.base_genes.extend([j] * instance.num_machines)
+        self.population = []
+
+    def initialize_population(self):
+        self.population = []
+        for _ in range(self.pop_size):
+            genes = self.base_genes[:]
+            random.shuffle(genes)
+            self.population.append(genes)
+
+    def select_tournament(self, fitnesses, k=3):
+        indices = random.sample(range(self.pop_size), k)
+        best_idx = min(indices, key=lambda i: fitnesses[i])
+        return self.population[best_idx]
+
+    def crossover_jox(self, p1, p2):
+        # Job-based Order Crossover
+        mask = {j: random.choice([True, False]) for j in range(self.instance.num_jobs)}
+        c1 = [-1] * len(p1)
+        c2 = [-1] * len(p2)
+        
+        for i, gene in enumerate(p1):
+            if mask[gene]: c1[i] = gene
+        for i, gene in enumerate(p2):
+            if mask[gene]: c2[i] = gene
+            
+        p2_idx = 0
+        for i in range(len(c1)):
+            if c1[i] == -1:
+                while mask[p2[p2_idx]]: p2_idx += 1
+                c1[i] = p2[p2_idx]
+                p2_idx += 1
+                
+        p1_idx = 0
+        for i in range(len(c2)):
+            if c2[i] == -1:
+                while mask[p1[p1_idx]]: p1_idx += 1
+                c2[i] = p1[p1_idx]
+                p1_idx += 1
+        return c1, c2
+
+    def mutate_swap(self, chrom):
+        if random.random() < self.mutation_rate:
+            i, j = random.sample(range(len(chrom)), 2)
+            chrom[i], chrom[j] = chrom[j], chrom[i]
+        return chrom
+
+    def run(self):
+        self.initialize_population()
+        best_fitness = float('inf')
+        
+        for g in range(self.generations):
+            fitnesses = [Scheduler.decode(self.instance, ind) for ind in self.population]
+            
+            min_fit = min(fitnesses)
+            if min_fit < best_fitness:
+                best_fitness = min_fit
+                print(f"Generacion {g}: Nuevo mejor makespan: {best_fitness}")
+            
+            # Simple elitism: keep best
+            best_idx = fitnesses.index(min_fit)
+            new_pop = [self.population[best_idx][:]] 
+            
+            while len(new_pop) < self.pop_size:
+                p1 = self.select_tournament(fitnesses)
+                p2 = self.select_tournament(fitnesses)
+                
+                if random.random() < self.crossover_rate:
+                    c1, c2 = self.crossover_jox(p1, p2)
+                else:
+                    c1, c2 = p1[:], p2[:]
+                
+                c1 = self.mutate_swap(c1)
+                c2 = self.mutate_swap(c2)
+                
+                new_pop.append(c1)
+                if len(new_pop) < self.pop_size:
+                    new_pop.append(c2)
+            
+            self.population = new_pop
+        return best_fitness
+
 if __name__ == "__main__":
     inst = JSSPLoader.load_from_string('ft06', DATA_FT06)
-    
-    # Crear cromosoma aleatorio: cada job aparece 'num_machines' veces
-    genes = []
-    for j in range(inst.num_jobs):
-        genes.extend([j] * inst.num_machines)
-    random.shuffle(genes)
-    
-    print(f"Cromosoma de prueba: {genes[:10]}...")
-    makespan = Scheduler.decode(inst, genes)
-    print(f"Makespan calculado: {makespan}")
+    ga = GeneticAlgorithm(inst, pop_size=50, generations=200)
+    print("Iniciando GA básico...")
+    res = ga.run()
+    print(f"Mejor resultado final: {res}")
