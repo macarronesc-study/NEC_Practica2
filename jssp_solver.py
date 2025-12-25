@@ -61,62 +61,47 @@ DATA_LA29 = """
 # ==========================================
 # PART 1: DATA STRUCTURES
 # ==========================================
-
 class JSSPInstance:
     def __init__(self, name, num_jobs, num_machines, jobs_data):
-        self.name = name
-        self.num_jobs = num_jobs
-        self.num_machines = num_machines
-        self.jobs = jobs_data
+        self.name = name; self.num_jobs = num_jobs; self.num_machines = num_machines; self.jobs = jobs_data
 
 class JSSPLoader:
     @staticmethod
     def load_from_string(name, content):
-        lines = content.strip().split('\n')
-        lines = [l.strip() for l in lines if l.strip() and not l.startswith('#')]
+        lines = content.strip().split('\n'); lines = [l.strip() for l in lines if l.strip() and not l.startswith('#')]
         try:
-            dims = lines[0].split()
-            num_jobs, num_machines = int(dims[0]), int(dims[1])
-            jobs_data = []
+            dims = lines[0].split(); num_jobs = int(dims[0]); num_machines = int(dims[1]); jobs_data = []
             for i in range(1, num_jobs + 1):
-                row = list(map(int, lines[i].split()))
-                job_ops = []
-                for j in range(0, len(row), 2):
-                    job_ops.append((row[j], row[j+1]))
+                if i >= len(lines): break
+                row = list(map(int, lines[i].split())); job_ops = []
+                for j in range(0, len(row), 2): job_ops.append((row[j], row[j+1]))
                 jobs_data.append(job_ops)
             return JSSPInstance(name, num_jobs, num_machines, jobs_data)
-        except Exception as e:
-            return None
+        except Exception: return None
 
     @staticmethod
     def parse_file(filename):
-        instances = {}
+        instances = {}; 
         if not os.path.exists(filename): return instances
         with open(filename, 'r') as f: lines = f.readlines()
         current_name = None; state = 0; job_count = 0; num_jobs = 0; current_jobs_data = []
         for line in lines:
             line = line.strip()
             if not line or line.startswith("+++"): continue
-            if line.startswith("instance"):
-                current_name = line.split()[1]; state = 1; continue
+            if line.startswith("instance"): current_name = line.split()[1]; state = 1; continue
             if state == 1:
                 parts = line.split()
                 if len(parts) == 2: num_jobs, num_machines = int(parts[0]), int(parts[1]); current_jobs_data = []; job_count = 0; state = 2
                 continue
             if state == 2:
-                row = list(map(int, line.split()))
-                job_ops = [(row[j], row[j+1]) for j in range(0, len(row), 2)]
+                row = list(map(int, line.split())); job_ops = [(row[j], row[j+1]) for j in range(0, len(row), 2)]
                 current_jobs_data.append(job_ops); job_count += 1
-                if job_count == num_jobs:
-                    instances[current_name] = JSSPInstance(current_name, num_jobs, num_machines, current_jobs_data); state = 0
+                if job_count == num_jobs: instances[current_name] = JSSPInstance(current_name, num_jobs, num_machines, current_jobs_data); state = 0
         return instances
 
 # ==========================================
-# PART 2 & 3: SCHEDULING AND GA
+# PART 2 & 3: SCHEDULING AND GENETIC ALGORITHM
 # ==========================================
-# (Clases Scheduler y GeneticAlgorithm idénticas al Commit 6, se omiten para brevedad, 
-# pero deben estar presentes en el archivo completo)
-
 class Scheduler:
     @staticmethod
     def decode(instance, chromosome, return_schedule=False):
@@ -130,11 +115,12 @@ class Scheduler:
             machine_id, duration = instance.jobs[job_id][op_idx]
             start_time = max(job_next_free_time[job_id], machine_free_time[machine_id])
             end_time = start_time + duration
+            
             machine_free_time[machine_id] = end_time
             job_next_free_time[job_id] = end_time
             job_op_index[job_id] += 1
             if return_schedule: schedule_data[machine_id].append((job_id, start_time, end_time))
-            
+                
         makespan = max(machine_free_time)
         return (makespan, schedule_data) if return_schedule else makespan
 
@@ -152,6 +138,7 @@ class GeneticAlgorithm:
         self.base_genes = []
         for j in range(instance.num_jobs): self.base_genes.extend([j] * instance.num_machines)
         self.population = []
+        self.history = []
 
     def initialize_population(self):
         self.population = []
@@ -160,15 +147,14 @@ class GeneticAlgorithm:
             random.shuffle(genes)
             self.population.append(genes)
 
-    # ... (Métodos de selección, cruce y mutación iguales al Commit 6) ...
-
     def select_tournament(self, fitnesses, k=3):
         indices = random.sample(range(self.pop_size), k)
         return self.population[min(indices, key=lambda i: fitnesses[i])]
 
     def select_roulette(self, fitnesses):
-        max_f = max(fitnesses) + 1; probs = [(max_f - f) for f in fitnesses]; total = sum(probs)
-        pick = random.uniform(0, total); current = 0
+        max_f = max(fitnesses) + 1; probs = [(max_f - f) for f in fitnesses]
+        total = sum(probs); pick = random.uniform(0, total); current = 0
+        if total == 0: return random.choice(self.population)
         for i, val in enumerate(probs):
             current += val
             if current > pick: return self.population[i]
@@ -177,10 +163,10 @@ class GeneticAlgorithm:
     def crossover_jox(self, p1, p2):
         mask = {j: random.choice([True, False]) for j in range(self.instance.num_jobs)}
         c1 = [-1]*len(p1); c2 = [-1]*len(p2)
-        for i, g in enumerate(p1): 
-            if mask[g]: c1[i] = g
-        for i, g in enumerate(p2): 
-            if mask[g]: c2[i] = g
+        for i, gene in enumerate(p1): 
+            if mask[gene]: c1[i] = gene
+        for i, gene in enumerate(p2): 
+            if mask[gene]: c2[i] = gene
         p2_idx = 0; p1_idx = 0
         for i in range(len(c1)):
             if c1[i] == -1:
@@ -196,10 +182,10 @@ class GeneticAlgorithm:
         job_set_size = random.randint(1, self.instance.num_jobs - 1)
         job_set = set(random.sample(range(self.instance.num_jobs), job_set_size))
         c1 = [-1]*len(p1); c2 = [-1]*len(p2)
-        for i, g in enumerate(p1):
-            if g in job_set: c1[i] = g
-        for i, g in enumerate(p2):
-            if g in job_set: c2[i] = g
+        for i, gene in enumerate(p1):
+            if gene in job_set: c1[i] = gene
+        for i, gene in enumerate(p2):
+            if gene in job_set: c2[i] = gene
         p2_idx = 0; p1_idx = 0
         for i in range(len(c1)):
             if c1[i] == -1:
@@ -224,33 +210,32 @@ class GeneticAlgorithm:
 
     def run(self):
         self.initialize_population()
-        history = []
+        self.history = []
         best_fitness = float('inf'); best_global = None
+        no_improv_limit = int(self.generations * 0.15); no_improv_count = 0
         
         for g in range(self.generations):
             fitnesses = [Scheduler.decode(self.instance, ind) for ind in self.population]
             min_fit = min(fitnesses)
             if min_fit < best_fitness:
-                best_fitness = min_fit
-                best_global = self.population[fitnesses.index(min_fit)][:]
-            
-            history.append(best_fitness)
+                best_fitness = min_fit; best_global = self.population[fitnesses.index(min_fit)][:]; no_improv_count = 0
+            else: no_improv_count += 1
+            self.history.append(best_fitness)
+            if no_improv_count >= no_improv_limit: break
+                
             sorted_indices = sorted(range(len(fitnesses)), key=lambda k: fitnesses[k])
             new_pop = [self.population[i] for i in sorted_indices[:self.elitism_size]]
-            
             while len(new_pop) < self.pop_size:
                 p1 = self.select_tournament(fitnesses) if self.selection_method == 'tournament' else self.select_roulette(fitnesses)
                 p2 = self.select_tournament(fitnesses) if self.selection_method == 'tournament' else self.select_roulette(fitnesses)
                 if random.random() < self.crossover_rate:
                     c1, c2 = self.crossover_jox(p1, p2) if self.crossover_method == 'JOX' else self.crossover_pox(p1, p2)
-                else:
-                    c1, c2 = p1[:], p2[:]
+                else: c1, c2 = p1[:], p2[:]
                 c1 = self.mutate_swap(c1) if self.mutation_method == 'swap' else self.mutate_insert(c1)
                 c2 = self.mutate_swap(c2) if self.mutation_method == 'swap' else self.mutate_insert(c2)
                 new_pop.extend([c1, c2])
             self.population = new_pop[:self.pop_size]
-            
-        return best_fitness, best_global, history
+        return best_fitness, best_global, self.history
 
 # ==========================================
 # PART 4: SIMULATED ANNEALING
@@ -265,13 +250,11 @@ class SimulatedAnnealing:
         current = self.base[:]; random.shuffle(current)
         current_fit = Scheduler.decode(self.instance, current)
         best = current[:]; best_fit = current_fit; history = []
-        
         for _ in range(max_steps):
             if self.temp < 1: break
             neighbor = current[:]; i, j = random.sample(range(len(neighbor)), 2)
             neighbor[i], neighbor[j] = neighbor[j], neighbor[i]
             new_fit = Scheduler.decode(self.instance, neighbor)
-            
             if new_fit < current_fit:
                 current = neighbor; current_fit = new_fit
                 if new_fit < best_fit: best_fit = new_fit; best = neighbor
@@ -283,7 +266,7 @@ class SimulatedAnnealing:
         return best_fit, best, history
 
 # ==========================================
-# PART 5: EXECUTION & PLOTTING
+# PART 5: MAIN EXECUTION
 # ==========================================
 
 def plot_gantt(instance, chromosome, title, filename):
@@ -294,56 +277,89 @@ def plot_gantt(instance, chromosome, title, filename):
         for job_id, start, end in tasks:
             ax.barh(m_id, end-start, left=start, color=colors[job_id], edgecolor='black', alpha=0.8)
             ax.text((start+end)/2, m_id, f"J{job_id}", ha='center', va='center', fontsize=8, color='white')
-    ax.set_title(f'{title} - Makespan: {makespan}'); plt.tight_layout()
+    ax.set_xlabel('Time'); ax.set_ylabel('Machine ID'); ax.set_title(f'{title} - Makespan: {makespan}')
+    ax.set_yticks(range(instance.num_machines))
+    plt.grid(axis='x', linestyle='--', alpha=0.5); plt.tight_layout()
     plt.savefig(filename); plt.close()
+    print(f"Saved Gantt chart: {filename}")
 
 def main():
     random.seed(51)
+
+    # 1. Load Data
     instances = {}
-    if os.path.exists('jobshop1.txt'): instances = JSSPLoader.parse_file('jobshop1.txt')
+    if os.path.exists('jobshop1.txt'):
+        print("Found jobshop1.txt, attempting to parse...")
+        instances = JSSPLoader.parse_file('jobshop1.txt')
     
-    # Cargar datasets embebidos si faltan
     if 'ft06' not in instances: instances['ft06'] = JSSPLoader.load_from_string('ft06', DATA_FT06)
     if 'la01' not in instances: instances['la01'] = JSSPLoader.load_from_string('la01', DATA_LA01)
     if 'la29' not in instances: instances['la29'] = JSSPLoader.load_from_string('la29', DATA_LA29)
     
-    target_instances = ['ft06', 'la01', 'la29']
+    selected_names = ['ft06', 'la01', 'la29']
     
-    # Configuración inicial para verificar integración
-    base_config = {'pop_size': 50, 'generations': 200, 'selection': 'tournament', 'crossover': 'JOX', 'mutation': 'swap'}
-
-    for name in target_instances:
-        if name not in instances: continue
-        inst = instances[name]
-        print(f"\n--- Procesando {name} ---")
+    # 2. Define Configurations (Requirement: at least 6 combinations)
+    configs = [
+        {'id': 1, 'pop_size': 50, 'generations': 500, 'selection': 'tournament', 'crossover': 'JOX', 'mutation': 'swap'},
+        {'id': 2, 'pop_size': 100, 'generations': 500, 'selection': 'tournament', 'crossover': 'JOX', 'mutation': 'swap'},
+        {'id': 3, 'pop_size': 100, 'generations': 500, 'selection': 'roulette', 'crossover': 'JOX', 'mutation': 'swap'},
+        {'id': 4, 'pop_size': 100, 'generations': 500, 'selection': 'tournament', 'crossover': 'POX', 'mutation': 'swap'},
+        {'id': 5, 'pop_size': 100, 'generations': 500, 'selection': 'tournament', 'crossover': 'JOX', 'mutation': 'insert'},
+        {'id': 6, 'pop_size': 200, 'generations': 1000, 'selection': 'tournament', 'crossover': 'JOX', 'mutation': 'swap'}
+    ]
+    
+    for name in selected_names:
+        inst = instances.get(name)
+        if not inst:
+            print(f"Skipping {name}, not found.")
+            continue
+            
+        print(f"\n=== Processing Instance: {inst.name} ({inst.num_jobs}x{inst.num_machines}) ===")
         
-        # 1. Ejecutar GA
-        start = time.time()
-        ga = GeneticAlgorithm(inst, base_config)
-        ga_fit, ga_chrom, ga_hist = ga.run()
-        print(f"GA Best: {ga_fit} (Time: {time.time()-start:.2f}s)")
+        best_ga_result = float('inf')
+        best_ga_chrom = None
+        best_ga_hist = []
         
-        # 2. Ejecutar SA
-        start = time.time()
-        sa = SimulatedAnnealing(inst, initial_temp=2000, cooling_rate=0.99)
-        sa_fit, sa_chrom, sa_hist = sa.run(max_steps=5000)
-        print(f"SA Best: {sa_fit} (Time: {time.time()-start:.2f}s)")
+        # Header for the results table
+        print(f"{'ID':<4} {'Params':<60} {'Makespan':<10} {'Time(s)':<10}")
         
-        # 3. Graficar Convergencia (Comparativa)
+        for cfg in configs:
+            start_t = time.time()
+            ga = GeneticAlgorithm(inst, cfg)
+            val, chrom, hist = ga.run()
+            dur = time.time() - start_t
+            
+            # Formatted row output
+            print(f"{cfg['id']:<4} Pop:{cfg['pop_size']}, Sel:{cfg['selection']}, Cross:{cfg['crossover']}, Mut:{cfg['mutation']}   {val:<10} {dur:.2f}")
+            
+            if val < best_ga_result:
+                best_ga_result = val
+                best_ga_chrom = chrom
+                best_ga_hist = hist
+        
+        # SA Comparison
+        print("Running Simulated Annealing...")
+        start_t = time.time()
+        # Increased steps and temp for final comparison
+        sa = SimulatedAnnealing(inst, initial_temp=2000, cooling_rate=0.995)
+        sa_val, sa_chrom, sa_hist = sa.run(max_steps=10000)
+        dur = time.time() - start_t
+        print(f"SA   Temp:2000, Cool:0.995                                         {sa_val:<10} {dur:.2f}")
+        
+        # Plots
         plt.figure(figsize=(10, 5))
-        plt.plot(ga_hist, label=f'GA (Min: {ga_fit})')
-        plt.plot(sa_hist, label=f'SA (Min: {sa_fit})', alpha=0.7)
-        plt.xlabel('Iteraciones'); plt.ylabel('Makespan')
-        plt.title(f'Convergencia: {inst.name}')
+        plt.plot(best_ga_hist, label=f'GA Best (Min: {best_ga_result})', linewidth=2)
+        plt.plot(sa_hist, label=f'SA (Min: {sa_val})', alpha=0.7)
+        plt.xlabel('Iterations'); plt.ylabel('Makespan')
+        plt.title(f'Convergence: {inst.name}')
         plt.legend(); plt.grid(True)
-        plt.savefig(f"{name}_convergence.png")
+        plt.savefig(f"{inst.name}_convergence.png")
         plt.close()
         
-        # 4. Gantt de la mejor solución global
-        if ga_fit < sa_fit:
-            plot_gantt(inst, ga_chrom, f"{name} Best (GA)", f"{name}_gantt.png")
+        if best_ga_result <= sa_val:
+            plot_gantt(inst, best_ga_chrom, f"{inst.name} Best Schedule (GA)", f"{inst.name}_gantt.png")
         else:
-            plot_gantt(inst, sa_chrom, f"{name} Best (SA)", f"{name}_gantt.png")
+            plot_gantt(inst, sa_chrom, f"{inst.name} Best Schedule (SA)", f"{inst.name}_gantt.png")
 
 if __name__ == "__main__":
     main()
