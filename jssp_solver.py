@@ -1,6 +1,8 @@
 import os
 import random
 import time
+import numpy as np
+import matplotlib.pyplot as plt
 
 DATA_FT06 = """
 6 6
@@ -59,19 +61,17 @@ class JSSPLoader:
 
 class Scheduler:
     @staticmethod
-    def decode(instance, chromosome):
-        # Tiempo libre de cada maquina
+    def decode(instance, chromosome, return_schedule=False):
         machine_free_time = [0] * instance.num_machines
-        # Tiempo libre de cada job (cuando acaba su operacion anterior)
         job_next_free_time = [0] * instance.num_jobs
-        # Indice de la operacion actual para cada job
         job_op_index = [0] * instance.num_jobs
+        
+        schedule_data = {m: [] for m in range(instance.num_machines)} # Nuevo para Gantt
         
         for job_id in chromosome:
             op_idx = job_op_index[job_id]
             machine_id, duration = instance.jobs[job_id][op_idx]
             
-            # Puede empezar cuando la maquina este libre Y el job haya acabado lo anterior
             start_time = max(job_next_free_time[job_id], machine_free_time[machine_id])
             end_time = start_time + duration
             
@@ -79,7 +79,12 @@ class Scheduler:
             job_next_free_time[job_id] = end_time
             job_op_index[job_id] += 1
             
+            if return_schedule:
+                schedule_data[machine_id].append((job_id, start_time, end_time))
+                
         makespan = max(machine_free_time)
+        if return_schedule:
+            return makespan, schedule_data
         return makespan
 
 class GeneticAlgorithm:
@@ -243,10 +248,38 @@ class GeneticAlgorithm:
             
         return best_fitness, best_chrom, self.history
 
+def plot_gantt(instance, chromosome, title, filename):
+    makespan, schedule = Scheduler.decode(instance, chromosome, return_schedule=True)
+    colors = plt.cm.tab20(np.linspace(0, 1, instance.num_jobs))
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    for m_id, tasks in schedule.items():
+        for job_id, start, end in tasks:
+            ax.barh(m_id, end-start, left=start, color=colors[job_id], edgecolor='black', alpha=0.8)
+            ax.text((start+end)/2, m_id, f"J{job_id}", ha='center', va='center', fontsize=8, color='white')
+            
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Machine ID')
+    ax.set_title(f'{title} - Makespan: {makespan}')
+    ax.set_yticks(range(instance.num_machines))
+    plt.grid(axis='x', linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(filename)
+    print(f"Gantt guardado en {filename}")
+    plt.close()
+
 if __name__ == "__main__":
     inst = JSSPLoader.load_from_string('ft06', DATA_FT06)
-    # Test new config
-    cfg = {'pop_size': 50, 'generations': 100, 'selection': 'roulette', 'crossover': 'POX', 'mutation': 'insert'}
-    ga = GeneticAlgorithm(inst, cfg)
-    fit, _, _ = ga.run()
-    print(f"Resultado con Roulette/POX/Insert: {fit}")
+    
+    configs = [
+        {'id': 1, 'selection': 'tournament', 'crossover': 'JOX', 'mutation': 'swap'},
+        {'id': 2, 'selection': 'roulette', 'crossover': 'POX', 'mutation': 'insert'}
+    ]
+    
+    for cfg in configs:
+        ga = GeneticAlgorithm(inst, cfg)
+        best_fit, best_chrom, _ = ga.run()
+        print(f"Config {cfg['id']}: {best_fit}")
+        
+    # Plot del ultimo
+    plot_gantt(inst, best_chrom, "Test Chart", "test_gantt.png")
