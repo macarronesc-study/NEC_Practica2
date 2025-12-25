@@ -63,66 +63,134 @@ DATA_LA29 = """
 # ==========================================
 class JSSPInstance:
     def __init__(self, name, num_jobs, num_machines, jobs_data):
-        self.name = name; self.num_jobs = num_jobs; self.num_machines = num_machines; self.jobs = jobs_data
+        self.name = name
+        self.num_jobs = num_jobs
+        self.num_machines = num_machines
+        self.jobs = jobs_data # List of lists of tuples (machine, time)
 
 class JSSPLoader:
     @staticmethod
     def load_from_string(name, content):
-        lines = content.strip().split('\n'); lines = [l.strip() for l in lines if l.strip() and not l.startswith('#')]
+        """Parses a raw string of numbers into an instance"""
+        lines = content.strip().split('\n')
+        # Filter out empty lines or comments
+        lines = [l.strip() for l in lines if l.strip() and not l.startswith('#')]
+        
         try:
-            dims = lines[0].split(); num_jobs = int(dims[0]); num_machines = int(dims[1]); jobs_data = []
+            dims = lines[0].split()
+            num_jobs = int(dims[0])
+            num_machines = int(dims[1])
+            
+            jobs_data = []
             for i in range(1, num_jobs + 1):
                 if i >= len(lines): break
-                row = list(map(int, lines[i].split())); job_ops = []
-                for j in range(0, len(row), 2): job_ops.append((row[j], row[j+1]))
+                row = list(map(int, lines[i].split()))
+                job_ops = []
+                # Format: machine time machine time ...
+                for j in range(0, len(row), 2):
+                    m = row[j]
+                    t = row[j+1]
+                    job_ops.append((m, t))
                 jobs_data.append(job_ops)
+            
             return JSSPInstance(name, num_jobs, num_machines, jobs_data)
-        except Exception: return None
+        except Exception as e:
+            print(f"Error parsing string for {name}: {e}")
+            return None
 
     @staticmethod
     def parse_file(filename):
-        instances = {}; 
-        if not os.path.exists(filename): return instances
-        with open(filename, 'r') as f: lines = f.readlines()
-        current_name = None; state = 0; job_count = 0; num_jobs = 0; current_jobs_data = []
+        """ Robust line-by-line parser for the specific OR-Lib file format """
+        instances = {}
+        if not os.path.exists(filename):
+            return instances
+
+        with open(filename, 'r') as f:
+            lines = f.readlines()
+
+        current_name = None
+        state = 0 # 0: Look for name, 1: Look for dims, 2: Read Data
+        
+        job_count = 0
+        num_jobs = 0
+        num_machines = 0
+        current_jobs_data = []
+
         for line in lines:
             line = line.strip()
-            if not line or line.startswith("+++"): continue
-            if line.startswith("instance"): current_name = line.split()[1]; state = 1; continue
-            if state == 1:
-                parts = line.split()
-                if len(parts) == 2: num_jobs, num_machines = int(parts[0]), int(parts[1]); current_jobs_data = []; job_count = 0; state = 2
+            if not line: continue
+            if line.startswith("+++"): continue # Skip separators
+
+            if line.startswith("instance"):
+                current_name = line.split()[1]
+                state = 1
                 continue
+
+            if state == 1:
+                # Check if this line is dimensions (two integers)
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    num_jobs = int(parts[0])
+                    num_machines = int(parts[1])
+                    current_jobs_data = []
+                    job_count = 0
+                    state = 2
+                continue
+
             if state == 2:
-                row = list(map(int, line.split())); job_ops = [(row[j], row[j+1]) for j in range(0, len(row), 2)]
-                current_jobs_data.append(job_ops); job_count += 1
-                if job_count == num_jobs: instances[current_name] = JSSPInstance(current_name, num_jobs, num_machines, current_jobs_data); state = 0
+                # Read job lines
+                row = list(map(int, line.split()))
+                job_ops = []
+                for j in range(0, len(row), 2):
+                    m = row[j]
+                    t = row[j+1]
+                    job_ops.append((m, t))
+                current_jobs_data.append(job_ops)
+                job_count += 1
+                
+                if job_count == num_jobs:
+                    # Save Instance
+                    instances[current_name] = JSSPInstance(current_name, num_jobs, num_machines, current_jobs_data)
+                    state = 0 # Reset to look for next name
+        
         return instances
 
 # ==========================================
-# PART 2 & 3: SCHEDULING AND GENETIC ALGORITHM
+# PART 2: SCHEDULING (FITNESS)
 # ==========================================
+
 class Scheduler:
     @staticmethod
     def decode(instance, chromosome, return_schedule=False):
         machine_free_time = [0] * instance.num_machines
         job_next_free_time = [0] * instance.num_jobs
         job_op_index = [0] * instance.num_jobs
+        
         schedule_data = {m: [] for m in range(instance.num_machines)}
         
         for job_id in chromosome:
             op_idx = job_op_index[job_id]
             machine_id, duration = instance.jobs[job_id][op_idx]
+            
             start_time = max(job_next_free_time[job_id], machine_free_time[machine_id])
             end_time = start_time + duration
             
             machine_free_time[machine_id] = end_time
             job_next_free_time[job_id] = end_time
             job_op_index[job_id] += 1
-            if return_schedule: schedule_data[machine_id].append((job_id, start_time, end_time))
+            
+            if return_schedule:
+                schedule_data[machine_id].append((job_id, start_time, end_time))
                 
         makespan = max(machine_free_time)
-        return (makespan, schedule_data) if return_schedule else makespan
+        
+        if return_schedule:
+            return makespan, schedule_data
+        return makespan
+
+# ==========================================
+# PART 3: GENETIC ALGORITHM
+# ==========================================
 
 class GeneticAlgorithm:
     def __init__(self, instance, params):
@@ -132,11 +200,15 @@ class GeneticAlgorithm:
         self.mutation_rate = params.get('mutation_rate', 0.1)
         self.crossover_rate = params.get('crossover_rate', 0.8)
         self.elitism_size = max(1, int(self.pop_size * 0.05))
+        
         self.selection_method = params.get('selection', 'tournament')
         self.crossover_method = params.get('crossover', 'JOX')
         self.mutation_method = params.get('mutation', 'swap')
+        
         self.base_genes = []
-        for j in range(instance.num_jobs): self.base_genes.extend([j] * instance.num_machines)
+        for j in range(instance.num_jobs):
+            self.base_genes.extend([j] * instance.num_machines)
+            
         self.population = []
         self.history = []
 
@@ -149,120 +221,204 @@ class GeneticAlgorithm:
 
     def select_tournament(self, fitnesses, k=3):
         indices = random.sample(range(self.pop_size), k)
-        return self.population[min(indices, key=lambda i: fitnesses[i])]
+        best_idx = min(indices, key=lambda i: fitnesses[i])
+        return self.population[best_idx]
 
     def select_roulette(self, fitnesses):
-        max_f = max(fitnesses) + 1; probs = [(max_f - f) for f in fitnesses]
-        total = sum(probs); pick = random.uniform(0, total); current = 0
+        max_f = max(fitnesses) + 1
+        probs = [(max_f - f) for f in fitnesses]
+        total = sum(probs)
         if total == 0: return random.choice(self.population)
+        
+        pick = random.uniform(0, total)
+        current = 0
         for i, val in enumerate(probs):
             current += val
-            if current > pick: return self.population[i]
+            if current > pick:
+                return self.population[i]
         return self.population[-1]
 
     def crossover_jox(self, p1, p2):
         mask = {j: random.choice([True, False]) for j in range(self.instance.num_jobs)}
-        c1 = [-1]*len(p1); c2 = [-1]*len(p2)
-        for i, gene in enumerate(p1): 
+        c1 = [-1] * len(p1)
+        c2 = [-1] * len(p2)
+        
+        for i, gene in enumerate(p1):
             if mask[gene]: c1[i] = gene
-        for i, gene in enumerate(p2): 
+        for i, gene in enumerate(p2):
             if mask[gene]: c2[i] = gene
-        p2_idx = 0; p1_idx = 0
+            
+        p2_idx = 0
         for i in range(len(c1)):
             if c1[i] == -1:
                 while mask[p2[p2_idx]]: p2_idx += 1
-                c1[i] = p2[p2_idx]; p2_idx += 1
+                c1[i] = p2[p2_idx]
+                p2_idx += 1
+                
+        p1_idx = 0
         for i in range(len(c2)):
             if c2[i] == -1:
                 while mask[p1[p1_idx]]: p1_idx += 1
-                c2[i] = p1[p1_idx]; p1_idx += 1
+                c2[i] = p1[p1_idx]
+                p1_idx += 1
         return c1, c2
 
     def crossover_pox(self, p1, p2):
+        # True Precedence Operation Crossover (POX)
+        # Select a set of jobs to preserve from P1, rest from P2
         job_set_size = random.randint(1, self.instance.num_jobs - 1)
         job_set = set(random.sample(range(self.instance.num_jobs), job_set_size))
-        c1 = [-1]*len(p1); c2 = [-1]*len(p2)
+        
+        c1 = [-1] * len(p1)
+        c2 = [-1] * len(p2)
+        
+        # Copy genes belonging to job_set from P1 to C1 in strict position
         for i, gene in enumerate(p1):
-            if gene in job_set: c1[i] = gene
-        for i, gene in enumerate(p2):
-            if gene in job_set: c2[i] = gene
-        p2_idx = 0; p1_idx = 0
+            if gene in job_set:
+                c1[i] = gene
+                
+        # Fill remaining spots in C1 with genes from P2 (if they are NOT in job_set)
+        p2_idx = 0
         for i in range(len(c1)):
             if c1[i] == -1:
-                while p2[p2_idx] in job_set: p2_idx += 1
-                c1[i] = p2[p2_idx]; p2_idx += 1
+                while p2[p2_idx] in job_set:
+                    p2_idx += 1
+                c1[i] = p2[p2_idx]
+                p2_idx += 1
+                
+        # Symmetric for C2 (preserve job_set from P2)
+        for i, gene in enumerate(p2):
+            if gene in job_set:
+                c2[i] = gene
+                
+        p1_idx = 0
         for i in range(len(c2)):
             if c2[i] == -1:
-                while p1[p1_idx] in job_set: p1_idx += 1
-                c2[i] = p1[p1_idx]; p1_idx += 1
+                while p1[p1_idx] in job_set:
+                    p1_idx += 1
+                c2[i] = p1[p1_idx]
+                p1_idx += 1
+                
         return c1, c2
 
     def mutate_swap(self, chrom):
         if random.random() < self.mutation_rate:
-            i, j = random.sample(range(len(chrom)), 2); chrom[i], chrom[j] = chrom[j], chrom[i]
+            i, j = random.sample(range(len(chrom)), 2)
+            chrom[i], chrom[j] = chrom[j], chrom[i]
         return chrom
 
     def mutate_insert(self, chrom):
         if random.random() < self.mutation_rate:
-            i = random.randint(0, len(chrom) - 1); gene = chrom.pop(i)
-            j = random.randint(0, len(chrom)); chrom.insert(j, gene)
+            i = random.randint(0, len(chrom) - 1)
+            gene = chrom.pop(i)
+            j = random.randint(0, len(chrom))
+            chrom.insert(j, gene)
         return chrom
 
     def run(self):
         self.initialize_population()
         self.history = []
-        best_fitness = float('inf'); best_global = None
-        no_improv_limit = int(self.generations * 0.15); no_improv_count = 0
+        best_fitness = float('inf')
+        best_global = None
+        
+        no_improv_limit = int(self.generations * 0.15)
+        no_improv_count = 0
         
         for g in range(self.generations):
             fitnesses = [Scheduler.decode(self.instance, ind) for ind in self.population]
+            
             min_fit = min(fitnesses)
             if min_fit < best_fitness:
-                best_fitness = min_fit; best_global = self.population[fitnesses.index(min_fit)][:]; no_improv_count = 0
-            else: no_improv_count += 1
+                best_fitness = min_fit
+                best_global = self.population[fitnesses.index(min_fit)][:]
+                no_improv_count = 0
+            else:
+                no_improv_count += 1
+            
             self.history.append(best_fitness)
-            if no_improv_count >= no_improv_limit: break
+            
+            if no_improv_count >= no_improv_limit:
+                break
                 
             sorted_indices = sorted(range(len(fitnesses)), key=lambda k: fitnesses[k])
             new_pop = [self.population[i] for i in sorted_indices[:self.elitism_size]]
+            
             while len(new_pop) < self.pop_size:
-                p1 = self.select_tournament(fitnesses) if self.selection_method == 'tournament' else self.select_roulette(fitnesses)
-                p2 = self.select_tournament(fitnesses) if self.selection_method == 'tournament' else self.select_roulette(fitnesses)
+                if self.selection_method == 'tournament':
+                    p1 = self.select_tournament(fitnesses)
+                    p2 = self.select_tournament(fitnesses)
+                else:
+                    p1 = self.select_roulette(fitnesses)
+                    p2 = self.select_roulette(fitnesses)
+                
                 if random.random() < self.crossover_rate:
-                    c1, c2 = self.crossover_jox(p1, p2) if self.crossover_method == 'JOX' else self.crossover_pox(p1, p2)
-                else: c1, c2 = p1[:], p2[:]
-                c1 = self.mutate_swap(c1) if self.mutation_method == 'swap' else self.mutate_insert(c1)
-                c2 = self.mutate_swap(c2) if self.mutation_method == 'swap' else self.mutate_insert(c2)
-                new_pop.extend([c1, c2])
-            self.population = new_pop[:self.pop_size]
+                    if self.crossover_method == 'JOX':
+                        c1, c2 = self.crossover_jox(p1, p2)
+                    else:
+                        c1, c2 = self.crossover_pox(p1, p2)
+                else:
+                    c1, c2 = p1[:], p2[:]
+                
+                if self.mutation_method == 'swap':
+                    c1 = self.mutate_swap(c1)
+                    c2 = self.mutate_swap(c2)
+                else:
+                    c1 = self.mutate_insert(c1)
+                    c2 = self.mutate_insert(c2)
+                    
+                new_pop.append(c1)
+                if len(new_pop) < self.pop_size:
+                    new_pop.append(c2)
+                    
+            self.population = new_pop
+            
         return best_fitness, best_global, self.history
 
 # ==========================================
 # PART 4: SIMULATED ANNEALING
 # ==========================================
+
 class SimulatedAnnealing:
     def __init__(self, instance, initial_temp=1000, cooling_rate=0.99):
-        self.instance = instance; self.temp = initial_temp; self.cooling = cooling_rate
+        self.instance = instance
+        self.temp = initial_temp
+        self.cooling = cooling_rate
         self.base = []
-        for j in range(instance.num_jobs): self.base.extend([j] * instance.num_machines)
+        for j in range(instance.num_jobs):
+            self.base.extend([j] * instance.num_machines)
             
     def run(self, max_steps=5000):
-        current = self.base[:]; random.shuffle(current)
+        current = self.base[:]
+        random.shuffle(current)
         current_fit = Scheduler.decode(self.instance, current)
-        best = current[:]; best_fit = current_fit; history = []
+        
+        best = current[:]
+        best_fit = current_fit
+        history = []
+        
         for _ in range(max_steps):
             if self.temp < 1: break
-            neighbor = current[:]; i, j = random.sample(range(len(neighbor)), 2)
+            neighbor = current[:]
+            i, j = random.sample(range(len(neighbor)), 2)
             neighbor[i], neighbor[j] = neighbor[j], neighbor[i]
+            
             new_fit = Scheduler.decode(self.instance, neighbor)
+            
             if new_fit < current_fit:
-                current = neighbor; current_fit = new_fit
-                if new_fit < best_fit: best_fit = new_fit; best = neighbor
+                current = neighbor
+                current_fit = new_fit
+                if new_fit < best_fit:
+                    best_fit = new_fit
+                    best = neighbor
             else:
-                if random.random() < math.exp((current_fit - new_fit) / self.temp):
-                    current = neighbor; current_fit = new_fit
+                prob = math.exp((current_fit - new_fit) / self.temp)
+                if random.random() < prob:
+                    current = neighbor
+                    current_fit = new_fit
+            
             history.append(best_fit)
             self.temp *= self.cooling
+            
         return best_fit, best, history
 
 # ==========================================
@@ -273,32 +429,48 @@ def plot_gantt(instance, chromosome, title, filename):
     makespan, schedule = Scheduler.decode(instance, chromosome, return_schedule=True)
     colors = plt.cm.tab20(np.linspace(0, 1, instance.num_jobs))
     fig, ax = plt.subplots(figsize=(12, 6))
+    
     for m_id, tasks in schedule.items():
         for job_id, start, end in tasks:
             ax.barh(m_id, end-start, left=start, color=colors[job_id], edgecolor='black', alpha=0.8)
             ax.text((start+end)/2, m_id, f"J{job_id}", ha='center', va='center', fontsize=8, color='white')
-    ax.set_xlabel('Time'); ax.set_ylabel('Machine ID'); ax.set_title(f'{title} - Makespan: {makespan}')
+            
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Machine ID')
+    ax.set_title(f'{title} - Makespan: {makespan}')
     ax.set_yticks(range(instance.num_machines))
-    plt.grid(axis='x', linestyle='--', alpha=0.5); plt.tight_layout()
-    plt.savefig(filename); plt.close()
+    plt.grid(axis='x', linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(filename)
     print(f"Saved Gantt chart: {filename}")
+    plt.close()
 
 def main():
+    # Deterministic random
     random.seed(51)
 
     # 1. Load Data
     instances = {}
+    
+    # Try loading from file first
     if os.path.exists('jobshop1.txt'):
         print("Found jobshop1.txt, attempting to parse...")
         instances = JSSPLoader.parse_file('jobshop1.txt')
     
-    if 'ft06' not in instances: instances['ft06'] = JSSPLoader.load_from_string('ft06', DATA_FT06)
-    if 'la01' not in instances: instances['la01'] = JSSPLoader.load_from_string('la01', DATA_LA01)
-    if 'la29' not in instances: instances['la29'] = JSSPLoader.load_from_string('la29', DATA_LA29)
+    # Ensure specific instances are loaded from embedded strings if missing
+    if 'ft06' not in instances:
+        print("Loading ft06 from embedded data...")
+        instances['ft06'] = JSSPLoader.load_from_string('ft06', DATA_FT06)
+    if 'la01' not in instances:
+        print("Loading la01 from embedded data...")
+        instances['la01'] = JSSPLoader.load_from_string('la01', DATA_LA01)
+    if 'la29' not in instances:
+        print("Loading la29 from embedded data...")
+        instances['la29'] = JSSPLoader.load_from_string('la29', DATA_LA29)
     
     selected_names = ['ft06', 'la01', 'la29']
     
-    # 2. Define Configurations (Requirement: at least 6 combinations)
+    # 2. Define Configurations
     configs = [
         {'id': 1, 'pop_size': 50, 'generations': 500, 'selection': 'tournament', 'crossover': 'JOX', 'mutation': 'swap'},
         {'id': 2, 'pop_size': 100, 'generations': 500, 'selection': 'tournament', 'crossover': 'JOX', 'mutation': 'swap'},
@@ -320,16 +492,13 @@ def main():
         best_ga_chrom = None
         best_ga_hist = []
         
-        # Header for the results table
         print(f"{'ID':<4} {'Params':<60} {'Makespan':<10} {'Time(s)':<10}")
-        
         for cfg in configs:
             start_t = time.time()
             ga = GeneticAlgorithm(inst, cfg)
             val, chrom, hist = ga.run()
             dur = time.time() - start_t
             
-            # Formatted row output
             print(f"{cfg['id']:<4} Pop:{cfg['pop_size']}, Sel:{cfg['selection']}, Cross:{cfg['crossover']}, Mut:{cfg['mutation']}   {val:<10} {dur:.2f}")
             
             if val < best_ga_result:
@@ -340,7 +509,6 @@ def main():
         # SA Comparison
         print("Running Simulated Annealing...")
         start_t = time.time()
-        # Increased steps and temp for final comparison
         sa = SimulatedAnnealing(inst, initial_temp=2000, cooling_rate=0.995)
         sa_val, sa_chrom, sa_hist = sa.run(max_steps=10000)
         dur = time.time() - start_t
@@ -350,9 +518,11 @@ def main():
         plt.figure(figsize=(10, 5))
         plt.plot(best_ga_hist, label=f'GA Best (Min: {best_ga_result})', linewidth=2)
         plt.plot(sa_hist, label=f'SA (Min: {sa_val})', alpha=0.7)
-        plt.xlabel('Iterations'); plt.ylabel('Makespan')
+        plt.xlabel('Iterations')
+        plt.ylabel('Makespan')
         plt.title(f'Convergence: {inst.name}')
-        plt.legend(); plt.grid(True)
+        plt.legend()
+        plt.grid(True)
         plt.savefig(f"{inst.name}_convergence.png")
         plt.close()
         
