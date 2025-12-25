@@ -1,6 +1,7 @@
 import os
 import random
 import time
+import math
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -268,18 +269,61 @@ def plot_gantt(instance, chromosome, title, filename):
     print(f"Gantt guardado en {filename}")
     plt.close()
 
+class SimulatedAnnealing:
+    def __init__(self, instance, initial_temp=1000, cooling_rate=0.99):
+        self.instance = instance
+        self.temp = initial_temp
+        self.cooling = cooling_rate
+        self.base = []
+        for j in range(instance.num_jobs):
+            self.base.extend([j] * instance.num_machines)
+            
+    def run(self, max_steps=5000):
+        current = self.base[:]
+        random.shuffle(current)
+        current_fit = Scheduler.decode(self.instance, current)
+        
+        best = current[:]
+        best_fit = current_fit
+        history = []
+        
+        for _ in range(max_steps):
+            if self.temp < 1: break
+            
+            # Generar vecino (swap)
+            neighbor = current[:]
+            i, j = random.sample(range(len(neighbor)), 2)
+            neighbor[i], neighbor[j] = neighbor[j], neighbor[i]
+            
+            new_fit = Scheduler.decode(self.instance, neighbor)
+            
+            # Criterio de aceptación Metropolis
+            if new_fit < current_fit:
+                current = neighbor
+                current_fit = new_fit
+                if new_fit < best_fit:
+                    best_fit = new_fit
+                    best = neighbor
+            else:
+                prob = math.exp((current_fit - new_fit) / self.temp)
+                if random.random() < prob:
+                    current = neighbor
+                    current_fit = new_fit
+            
+            history.append(best_fit)
+            self.temp *= self.cooling
+            
+        return best_fit, best, history
+
 if __name__ == "__main__":
     inst = JSSPLoader.load_from_string('ft06', DATA_FT06)
     
-    configs = [
-        {'id': 1, 'selection': 'tournament', 'crossover': 'JOX', 'mutation': 'swap'},
-        {'id': 2, 'selection': 'roulette', 'crossover': 'POX', 'mutation': 'insert'}
-    ]
+    print("Running GA...")
+    ga = GeneticAlgorithm(inst, {'pop_size': 50})
+    ga_fit, _, _ = ga.run()
     
-    for cfg in configs:
-        ga = GeneticAlgorithm(inst, cfg)
-        best_fit, best_chrom, _ = ga.run()
-        print(f"Config {cfg['id']}: {best_fit}")
-        
-    # Plot del ultimo
-    plot_gantt(inst, best_chrom, "Test Chart", "test_gantt.png")
+    print("Running SA...")
+    sa = SimulatedAnnealing(inst)
+    sa_fit, _, _ = sa.run()
+    
+    print(f"GA: {ga_fit} vs SA: {sa_fit}")
