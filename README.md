@@ -30,7 +30,7 @@ pip install numpy matplotlib
 Execute the main script from the terminal:
 
 ```bash
-python jssp_solver-final.py
+python jssp_solver.py
 ```
 
 *Note: The script checks for `jobshop1.txt`. If not found, it automatically uses the embedded fallback data for the required instances.*
